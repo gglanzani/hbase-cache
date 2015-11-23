@@ -1,12 +1,14 @@
 ﻿from werkzeug.contrib.cache import BaseCache, _items
 from happybase import Connection
 
+
 class HBaseCache(BaseCache):
     def __init__(self, host='127.0.0.1', port=9090, prefix=None, table_name=None, default_timeout=300, **kwargs):
         super(HBaseCache, self).__init__(default_timeout)
         
         if not table_name:
             raise TypeError('table_name is a required argument')
+        self.table_name = table_name
 
         self._c = Connection(host=host, port=port, table_prefix=table_prefix, **kwargs)
         self._table = self._c.table(table_name)
@@ -23,7 +25,7 @@ class HBaseCache(BaseCache):
     def add(self, key, value, timeout=None):
         table = self._table
         try:
-            if not table.row(key):
+            if not table.row(key):  # TO-DO: what does table.row returns for non existing keys?
                 table.put(*self._put(key, value))
             else:
                 return False
@@ -70,12 +72,15 @@ class HBaseCache(BaseCache):
     def get_dict(self, *keys):
         table = self._table
         _, values = table.rows(keys)
-        return {self._extract(v) for v in values}
+        return {k: self._extract(v) for v in zip(keys, values)}
 
     def get_many(self, *keys):
         table = self._table
         _, values = table.rows(keys)
         return map(self._extract, values)
+
+    def has(self, key):
+        return super(HBaseCache, self).has(key)
 
     def inc(self, key, delta=1):
         table = self._table
