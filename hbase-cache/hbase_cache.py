@@ -12,6 +12,7 @@ class HBaseCache(BaseCache):
 
         self._c = Connection(host=host, port=port, table_prefix=table_prefix, **kwargs)
         self._table = self._c.table(table_name)
+        self.clear()
 
     def _put(self, key, value):
         return key, {'cf:value': value}
@@ -34,8 +35,8 @@ class HBaseCache(BaseCache):
         return True
 
     def clear(self):
-        self.c.delete_table(self.table_name, disable=True)
-        self.c.create_table(self.table_name, {'cf': dict()})
+        self._c.delete_table(self.table_name, disable=True)
+        self._c.create_table(self.table_name, {'cf': dict()})
         return super(HBaseCache, self).clear()
 
     def dec(self, key, delta=1):
