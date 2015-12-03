@@ -1,5 +1,6 @@
 ﻿from werkzeug.contrib.cache import BaseCache, _items
 from happybase import Connection
+from datetime import datetime, timedelta
 
 from operator import itemgetter
 
@@ -7,7 +8,7 @@ from operator import itemgetter
 class HBaseCache(BaseCache):
     def __init__(self, host='127.0.0.1', port=9090, prefix=None, table_name=None, default_timeout=300, **kwargs): 
 # Potential bug: table_prefix instead of prefix
-        BaseCache.__init__(self, default_timeout)
+        super(HBaseCache, self).__init__(default_timeout)
         
         if not table_name:
             raise TypeError('table_name is a required argument')
@@ -18,22 +19,26 @@ class HBaseCache(BaseCache):
         
         self.clear()
 
-    def _put(self, key, value):
-        return key, {'cf:value': value}
+    def _put(self, key, value, timeout):
+        timestap = datetime.now() + timedelta(timeout or self.default_timeout)
+        return key, {'cf:value': value, 'cf:timestamp': timestamp}
 
     def _extract(self, value):
         if value:
-            return value.get('cf:value')
+            v = value.get('cf:value')
+            ts = value.get('cf:timestamp')
+            if ts > datetime.now():
+                return v
+            else:
+                return None
         else:
-            return value
+            return None
 
-    def add(self, key, value, timeout=None): # Note: timeout is not used in this method, but should be
-        print "Adding stuff"
+    def add(self, key, value, timeout=None):
         table = self._table
-        print table
         try:
-            if not table.row(key):  # TO-DO: what does table.row returns for non existing keys? # Returns empty dict >> check for it and return None
-                table.put(*self._put(key, value))
+            if not table.row(key):
+                table.put(*self._put(key, value, timeout))
             else:
                 return False
         except:
@@ -41,7 +46,6 @@ class HBaseCache(BaseCache):
         return True
 
     def clear(self):
-        print "Clearing stuff"
         try:
             self._c.delete_table(self.table_name, disable=True)
         except:
@@ -51,13 +55,6 @@ class HBaseCache(BaseCache):
 
     def dec(self, key, delta=1):
         return self.inc(key, -delta)
-#        table = self._table
-#        new_value = table.counter_inc(key, 'cf:value', -delta)
-#        value = table.row(key)
-#        new_value = (self._extract(value) or 0) - delta
-#        table.put(*self._put(key, new_value))
-        # TO-DO the above should in principle be guarded by some exception handling
-#        return new_value
 
     def delete(self, key):
         try:
@@ -85,14 +82,14 @@ class HBaseCache(BaseCache):
         rows = table.rows(keys)
         if not rows:
             return {k: None for k in keys}
-        return {k: self._extract(v) for k, v in rows}
+        return {k: self._extract(v) for k, v in rows}  # TO-DO I don't think this works. Need to return None if some values do not exist
 
     def get_many(self, *keys):
         table = self._table
         rows = table.rows(keys)
         if not rows:
             return [None for _ in keys]
-        return map(self._extract, map(itemgetter(1), rows))
+        return map(self._extract, map(itemgetter(1), rows))  # TO-DO I don't think this works. Need to return None if some values do not exist
 
     def has(self, key):
         return super(HBaseCache, self).has(key)
@@ -104,20 +101,17 @@ class HBaseCache(BaseCache):
 
     def set(self, key, value, timeout=None):
         table = self._table
-        print "Setting stuff"
-        print table
         try:
             table.delete(key)  # TO-DO Does this return an exception if it doesn't exist? Otherwise we need to put a table.row before that
-            table.put(*self._put(key, value))
+            table.put(*self._put(key, value, timeout))
         except:
             return False
         return True
 
     def set_many(self, mapping, timeout=None):
-        print "Set many"
         batch = self._table.batch()
         for key, value in _items(mapping):
-            batch.put(*self._put(key, value))
+            batch.put(*self._put(key, value, timeout))
         try:
             batch.send()
         except:
@@ -126,7 +120,10 @@ class HBaseCache(BaseCache):
 
 
 def hbase(app, config, args, kwargs):
-#    args.append(app.config['HBASE_SERVER'])
-    kwargs['table_name'] = 'test'
+    settings = {'host': config.get('CACHE_HBASE_HOST', '127.0.0.1'),
+                'port': config.get('CACHE_HBASE_PORT', 9090),
+                'table_name': config.get('CACHE_HBASE_TABLE'),
+                'prefix': config.get('CACHE_HBASE_PREFIX'),
+                'default_timeout': config.get('CACHE_DEFAULT_TIMEOUT', 300)}
+    kwargs.update(settings) 
     return HBaseCache(*args, **kwargs)
-
