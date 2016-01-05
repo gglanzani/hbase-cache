@@ -1,13 +1,16 @@
-﻿from werkzeug.contrib.cache import BaseCache, _items
-from happybase import Connection
-from datetime import datetime, timedelta
-
+﻿from datetime import datetime, timedelta
 from operator import itemgetter
+from collections import OrderedDict
+
+from happybase import Connection
+from werkzeug.contrib.cache import BaseCache, _items
+
+def from_iso(dt):
+    return datetime.strptime(dt, '%Y-%m-%dT%H:%M:%S.%f')
 
 
 class HBaseCache(BaseCache):
     def __init__(self, host='127.0.0.1', port=9090, prefix=None, table_name=None, default_timeout=300, **kwargs): 
-# Potential bug: table_prefix instead of prefix
         super(HBaseCache, self).__init__(default_timeout)
         
         if not table_name:
@@ -20,13 +23,13 @@ class HBaseCache(BaseCache):
         self.clear()
 
     def _put(self, key, value, timeout):
-        timestap = datetime.now() + timedelta(timeout or self.default_timeout)
+        timestamp = (datetime.now() + timedelta(0, timeout or self.default_timeout)).isoformat()
         return key, {'cf:value': value, 'cf:timestamp': timestamp}
 
     def _extract(self, value):
         if value:
             v = value.get('cf:value')
-            ts = value.get('cf:timestamp')
+            ts = from_iso(value.get('cf:timestamp'))
             if ts > datetime.now():
                 return v
             else:
@@ -79,17 +82,13 @@ class HBaseCache(BaseCache):
 
     def get_dict(self, *keys):
         table = self._table
-        rows = table.rows(keys)
-        if not rows:
-            return {k: None for k in keys}
-        return {k: self._extract(v) for k, v in rows}  # TO-DO I don't think this works. Need to return None if some values do not exist
+        rows = OrderedDict(table.rows(keys))
+        return {k: self._extract(rows.get(k, None)) for k in keys}  # Non-existing keys are not return by table.rows()
 
     def get_many(self, *keys):
         table = self._table
-        rows = table.rows(keys)
-        if not rows:
-            return [None for _ in keys]
-        return map(self._extract, map(itemgetter(1), rows))  # TO-DO I don't think this works. Need to return None if some values do not exist
+        rows = OrderedDict(table.rows(keys))
+        return [self._extract(rows.get(k, None)) for k in keys]  # Non-existing keys are not return by table.rows()
 
     def has(self, key):
         return super(HBaseCache, self).has(key)
@@ -102,7 +101,7 @@ class HBaseCache(BaseCache):
     def set(self, key, value, timeout=None):
         table = self._table
         try:
-            table.delete(key)  # TO-DO Does this return an exception if it doesn't exist? Otherwise we need to put a table.row before that
+            table.delete(key)
             table.put(*self._put(key, value, timeout))
         except:
             return False
