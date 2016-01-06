@@ -1,6 +1,5 @@
 ﻿from datetime import datetime, timedelta
 from operator import itemgetter
-from collections import OrderedDict
 
 from happybase import Connection
 from werkzeug.contrib.cache import BaseCache, _items
@@ -60,20 +59,13 @@ class HBaseCache(BaseCache):
         return self.inc(key, -delta)
 
     def delete(self, key):
-        try:
-            self._table.delete(key)
-        except:
-            return False
-        return True
+        # delete in happybase just uses batch()
+        return self.delete_many([key])
 
     def delete_many(self, *keys):
-        batch = self._table.batch()
-        try:
+        with self._table.batch() as batch: # TO-DO: exceptions here?
             for k in keys:
-                batch.delete(k)
-            batch.send()
-        except:
-            return False
+                batch.delete()
         return True
 
     def get(self, key):
@@ -81,14 +73,14 @@ class HBaseCache(BaseCache):
         return self._extract(value) or None
 
     def get_dict(self, *keys):
+        keys = keys[0]
         table = self._table
-        rows = OrderedDict(table.rows(keys))
-        return {k: self._extract(rows.get(k, None)) for k in keys}  # Non-existing keys are not return by table.rows()
+        results = dict(table.rows(keys))
+        return {k: self._extract(results.get(k, None)) for k in keys}  # Non-existing keys are not returned by table.rows()
 
     def get_many(self, *keys):
-        table = self._table
-        rows = OrderedDict(table.rows(keys))
-        return [self._extract(rows.get(k, None)) for k in keys]  # Non-existing keys are not return by table.rows()
+        result = self.get_dict(*keys)
+        return [result[k] for k in keys[0]]
 
     def has(self, key):
         return super(HBaseCache, self).has(key)
@@ -98,7 +90,9 @@ class HBaseCache(BaseCache):
         new_value = table.counter_inc(key, 'cf:value', delta)
         return new_value
 
+    # TO-DO: rewrite this to use set_many. Check if delete is necessary, etc.
     def set(self, key, value, timeout=None):
+        # set in happybase just uses batch
         table = self._table
         try:
             table.delete(key)
